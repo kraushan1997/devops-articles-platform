@@ -1,0 +1,11 @@
+# Install and configure chrony (NTP) on Kubernetes worker hosts.
+# Accurate time matters for: TLS certificate validation, etcd/raft leases, JWT/
+# service-account token expiry, MongoDB replica-set elections and log ordering.
+#
+#   ansible-playbook site.yml            # apply
+#   ansible-playbook site.yml --check    # dry-run
+- name: Configure NTP on Kubernetes worker hosts
+  hosts: k8s_workers
+  gather_facts: true
+  roles:
+    - chrony

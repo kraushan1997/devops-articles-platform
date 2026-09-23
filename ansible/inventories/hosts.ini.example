@@ -1,0 +1,13 @@
+# Hosts whose clock the Kubernetes nodes depend on.
+#
+# k3d: the "nodes" are containers and share the Docker host's kernel clock, so
+#      NTP must be configured on the Docker host (use `localhost ansible_connection=local`
+#      on Linux/WSL2).
+# Self-managed VMs / bare-metal workers (non-managed images): list them here.
+# EKS: not needed - AL2023 EKS-optimised AMIs ship chrony pointed at the
+#      Amazon Time Sync Service (169.254.169.123).
+
+[k8s_workers]
+localhost ansible_connection=local
+# worker-1 ansible_host=10.0.1.11 ansible_user=ubuntu
+# worker-2 ansible_host=10.0.1.12 ansible_user=ubuntu

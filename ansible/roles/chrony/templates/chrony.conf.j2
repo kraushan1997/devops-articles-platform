@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+{% if chrony_on_aws %}
+{% for s in chrony_servers_aws %}
+server {{ s }} prefer iburst minpoll 4 maxpoll 4
+{% endfor %}
+{% endif %}
+{% for p in chrony_pools_default %}
+pool {{ p }} iburst
+{% endfor %}
+
+driftfile /var/lib/chrony/chrony.drift
+makestep {{ chrony_makestep }}
+# keep the hardware clock in sync
+rtcsync
+# never act as a server for other hosts
+port 0
+cmdport 0
+logdir /var/log/chrony

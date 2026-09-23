@@ -1,0 +1,53 @@
+- name: Set OS-specific names
+  ansible.builtin.set_fact:
+    chrony_service: "{{ 'chrony' if ansible_facts.os_family == 'Debian' else 'chronyd' }}"
+    chrony_conf_path: "{{ '/etc/chrony/chrony.conf' if ansible_facts.os_family == 'Debian' else '/etc/chrony.conf' }}"
+
+- name: Remove competing time daemons
+  ansible.builtin.package:
+    name: [ntp, ntpsec, systemd-timesyncd]
+    state: absent
+  failed_when: false   # not every distro ships all of them
+
+- name: Install chrony and node dependencies
+  ansible.builtin.package:
+    name: "{{ ['chrony'] + (node_extra_packages if ansible_facts.os_family == 'Debian' else node_extra_packages | reject('equalto', 'nfs-common') | list + ['nfs-utils']) }}"
+    state: present
+
+- name: Configure chrony
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: "{{ chrony_conf_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart chrony
+
+- name: Enable and start chrony
+  ansible.builtin.service:
+    name: "{{ chrony_service }}"
+    state: started
+    enabled: true
+
+- name: Apply config now (so verification sees it)
+  ansible.builtin.meta: flush_handlers
+
+- name: Force an immediate sync
+  ansible.builtin.command: chronyc -a makestep
+  changed_when: false
+
+- name: Read synchronisation status
+  ansible.builtin.command: chronyc tracking
+  register: chrony_tracking
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: "'Not synchronised' not in chrony_tracking.stdout"
+
+- name: Verify clock offset is within tolerance
+  vars:
+    offset: "{{ chrony_tracking.stdout | regex_search('System time\\s*:\\s*([0-9.]+)', '\\1') | first | float }}"
+  ansible.builtin.assert:
+    that: offset | float < chrony_max_offset_seconds
+    success_msg: "clock offset {{ offset }}s OK"
+    fail_msg: "clock offset {{ offset }}s exceeds {{ chrony_max_offset_seconds }}s"

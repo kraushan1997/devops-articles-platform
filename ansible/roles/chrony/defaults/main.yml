@@ -1,0 +1,21 @@
+# Upstream servers. On AWS the link-local Amazon Time Sync Service is preferred;
+# elsewhere the public NTP pool is used.
+chrony_on_aws: "{{ ansible_facts.get('system_vendor', '') is search('Amazon') }}"
+chrony_servers_aws:
+  - 169.254.169.123
+chrony_pools_default:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+  - 2.pool.ntp.org
+  - 3.pool.ntp.org
+# step the clock if it is off by more than 1s during the first 3 updates
+chrony_makestep: "1.0 3"
+# fail the verification task if the offset is larger than this (seconds)
+chrony_max_offset_seconds: 0.5
+# other node dependencies commonly required by kubelet / CSI drivers
+node_extra_packages:
+  - conntrack
+  - socat
+  - ebtables
+  - ethtool
+  - nfs-common
