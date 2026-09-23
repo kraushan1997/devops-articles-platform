@@ -1,0 +1,163 @@
+# CI/CD pipeline
+#
+#   PR + push:  lint/test the API, lint + render + schema-validate the Helm charts,
+#               fmt/validate every Terraform root
+#   push main:  build & push multi-arch images to GHCR (tagged sha-<short> + latest),
+#               vulnerability-scan them, then commit the new tag into
+#               gitops/values/common/images.yaml -> Argo CD rolls it out (GitOps).
+#
+# All third-party actions are pinned to a commit SHA (supply-chain hardening).
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  app:
+    name: API - lint & unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check src tests
+      - run: pytest -q
+
+  helm:
+    name: Helm - lint, render, validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+            | sudo tar xz -C /usr/local/bin kubeconform
+      - name: Lint
+        run: |
+          helm lint charts/articles-api -f gitops/values/common/articles-api.yaml
+          helm lint charts/mongodb -f gitops/values/common/mongodb.yaml
+      - name: Render every environment and validate against the Kubernetes schema
+        run: |
+          mkdir -p rendered
+          for env in local aws; do
+            helm template mongodb charts/mongodb -n articles \
+              -f gitops/values/common/mongodb.yaml -f gitops/values/$env/mongodb.yaml > rendered/mongodb-$env.yaml
+            helm template articles-api charts/articles-api -n articles \
+              -f gitops/values/common/articles-api.yaml -f gitops/values/common/images.yaml \
+              -f gitops/values/$env/articles-api.yaml > rendered/api-$env.yaml
+          done
+          kubeconform -strict -summary -kubernetes-version 1.35.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered/ gitops/apps/
+
+  terraform:
+    name: Terraform - fmt & validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          - terraform/environments/local/1-cluster
+          - terraform/environments/local/2-platform
+          - terraform/environments/aws/1-cluster
+          - terraform/environments/aws/2-platform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - run: terraform fmt -check -recursive terraform
+      - run: terraform -chdir=${{ matrix.root }} init -backend=false -input=false
+      - run: terraform -chdir=${{ matrix.root }} validate
+
+  images:
+    name: Build & push ${{ matrix.image.name }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [app, helm, terraform]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    strategy:
+      matrix:
+        image:
+          - { name: articles-api, context: app, extra_tag: "" }
+          - { name: mongodb, context: images/mongodb, extra_tag: "8.0" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+            type=raw,value=${{ matrix.image.extra_tag }},enable=${{ matrix.image.extra_tag != '' }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.image.context }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+      - name: Vulnerability scan (report only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:latest
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+
+  gitops-bump:
+    name: Bump image tag in GitOps values
+    needs: [images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Write the new tag and commit
+        run: |
+          TAG="sha-$(git rev-parse --short=7 HEAD)"
+          sed -i -E "s|^(  tag:).*|\1 ${TAG}|" gitops/values/common/images.yaml
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gitops/values/common/images.yaml
+          git diff --cached --quiet && { echo "tag unchanged"; exit 0; }
+          git commit -m "deploy: articles-api ${TAG} [skip ci]"
+          git push
