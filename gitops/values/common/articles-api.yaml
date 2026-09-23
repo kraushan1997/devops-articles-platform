@@ -1,0 +1,12 @@
+# Settings shared by every environment. Environment files override these.
+mongodb:
+  passwordSecret:
+    name: mongodb-auth            # created by Terraform (modules/platform)
+    key: mongodb-app-password
+metrics:
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true
+  grafanaDashboard:
+    enabled: true

@@ -1,0 +1,8 @@
+# k3d: default local-path StorageClass, small footprint
+persistence:
+  storageClass: ""
+  size: 2Gi
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 768Mi }
+wiredTigerCacheSizeGB: 0.25

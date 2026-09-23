@@ -1,0 +1,11 @@
+# EKS: encrypted gp3 EBS volumes (StorageClass created by Terraform); members
+# are spread across the 3 AZs (hard node anti-affinity + zone spread).
+persistence:
+  storageClass: gp3
+  size: 20Gi
+resources:
+  requests: { cpu: 500m, memory: 1Gi }
+  limits: { memory: 2Gi }
+wiredTigerCacheSizeGB: 0.5
+topologySpread:
+  whenUnsatisfiable: DoNotSchedule

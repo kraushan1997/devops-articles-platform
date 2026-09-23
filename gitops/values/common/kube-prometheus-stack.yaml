@@ -1,0 +1,20 @@
+# Discover ServiceMonitors / PrometheusRules from every namespace, not only the
+# ones labelled with this Helm release.
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    retention: 7d
+
+grafana:
+  admin:
+    existingSecret: grafana-admin     # created by Terraform (random password)
+    userKey: admin-user
+    passwordKey: admin-password
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL           # picks up the articles-api dashboard ConfigMap

@@ -1,0 +1,7 @@
+# k3d: Traefik ingress, exposed on http://localhost:8080
+ingress:
+  enabled: true
+  className: traefik
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 6

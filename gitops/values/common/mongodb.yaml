@@ -1,0 +1,6 @@
+auth:
+  existingSecret: mongodb-auth    # created by Terraform (random passwords + keyfile)
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true

@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mongodb
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kraushan1997/devops-articles-platform.git
+    targetRevision: main
+    path: charts/mongodb
+    helm:
+      releaseName: mongodb
+      valueFiles:
+        - ../../gitops/values/common/mongodb.yaml
+        - ../../gitops/values/local/mongodb.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: articles
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      # CRDs (ServiceMonitor/PrometheusRule) come from kube-prometheus-stack;
+      # skip dry-run for them on the very first sync and let retries converge
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

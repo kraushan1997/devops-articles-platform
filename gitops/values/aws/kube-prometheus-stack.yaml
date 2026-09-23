@@ -1,0 +1,18 @@
+# EKS: managed control plane -> its components are not scrapeable
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeEtcd: { enabled: false }
+
+prometheus:
+  prometheusSpec:
+    replicas: 2                       # HA pair
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests: { storage: 50Gi }
+alertmanager:
+  alertmanagerSpec:
+    replicas: 3                       # gossip cluster, survives one AZ loss

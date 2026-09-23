@@ -1,0 +1,19 @@
+# EKS: internet-facing ALB (AWS Load Balancer Controller) routing straight to pod
+# IPs; pod readiness gates (namespace label set by Terraform) make rollouts wait
+# until the ALB target is healthy.
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /readyz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # alb.ingress.kubernetes.io/certificate-arn: <acm-arn>   # enable HTTPS
+    # alb.ingress.kubernetes.io/ssl-redirect: "443"
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 20
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits: { memory: 512Mi }
