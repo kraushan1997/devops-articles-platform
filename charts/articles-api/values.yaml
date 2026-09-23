@@ -1,0 +1,88 @@
+# -- Baseline replicas (HPA scales between autoscaling.min/max when enabled).
+# >= 3 so a node loss or a rolling update never leaves a single copy.
+replicaCount: 3
+
+image:
+  repository: ghcr.io/kraushan1997/articles-api
+  # CI writes the immutable git-SHA tag into gitops/values/*.yaml; "latest" is
+  # only a fallback for manual installs.
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  # e.g. eks.amazonaws.com/role-arn for IRSA if the app ever needs AWS APIs
+  annotations: {}
+
+podAnnotations: {}
+
+# MongoDB connection. The URI is assembled in the pod from these values plus the
+# password Secret (Kubernetes $(VAR) expansion) so no credentials live in git.
+mongodb:
+  hosts:
+    - mongodb-0.mongodb-headless:27017
+    - mongodb-1.mongodb-headless:27017
+    - mongodb-2.mongodb-headless:27017
+  replicaSet: rs0
+  database: articles
+  user: articles
+  passwordSecret:
+    name: mongodb-auth
+    key: mongodb-app-password
+  # w=majority: an acknowledged write survives the loss of any single member
+  options: "replicaSet=rs0&authSource=articles&w=majority&retryWrites=true&readPreference=primaryPreferred"
+
+env:
+  LOG_LEVEL: INFO
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  # k3d -> traefik (bundled with k3s); EKS -> alb (AWS Load Balancer Controller)
+  className: traefik
+  annotations: {}
+  host: ""          # empty = match any host (use the LB hostname/IP directly)
+  tls: []
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { memory: 256Mi }
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  # with >=3 replicas this keeps >=2 serving during node drains
+  maxUnavailable: 1
+
+# soft: prefer different nodes (hard would block scale-out beyond node count)
+antiAffinity: soft
+topologySpread:
+  enabled: true
+  whenUnsatisfiable: ScheduleAnyway
+
+nodeSelector: {}
+tolerations: []
+priorityClassName: ""
+
+networkPolicy:
+  enabled: true
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    labels: {}
+  prometheusRule:
+    enabled: true
+  grafanaDashboard:
+    enabled: true

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: mongodb
+description: MongoDB replica set (StatefulSet) with keyfile auth, self-bootstrapping users, PDB, anti-affinity and a Prometheus exporter
+type: application
+version: 0.1.0
+appVersion: "8.0"
+keywords: [mongodb, statefulset, replicaset]
+maintainers:
+  - name: kraushan1997

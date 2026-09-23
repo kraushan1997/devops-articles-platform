@@ -1,0 +1,70 @@
+{{- $name := include "api.fullname" . -}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "api.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.metrics.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: articles-api
+      rules:
+        - alert: ArticlesApiHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{service="{{ $name }}",status="5xx"}[5m]))
+              / clamp_min(sum(rate(http_requests_total{service="{{ $name }}"}[5m])), 1e-9) > 0.05
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: "Articles API 5xx rate above 5%"
+        - alert: ArticlesApiHighLatencyP95
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service="{{ $name }}"}[5m]))) > 0.5
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "Articles API p95 latency above 500ms"
+        - alert: ArticlesApiReplicasUnavailable
+          expr: kube_deployment_status_replicas_available{deployment="{{ $name }}", namespace="{{ .Release.Namespace }}"} < 2
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: "Fewer than 2 Articles API replicas available"
+{{- end }}
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+---
+# Picked up automatically by the Grafana sidecar in kube-prometheus-stack
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-dashboard
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  articles-api.json: |-
+{{ .Files.Get "dashboards/articles-api.json" | indent 4 }}
+{{- end }}

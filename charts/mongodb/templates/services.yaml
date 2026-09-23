@@ -1,0 +1,34 @@
+# Headless service: gives each member a stable DNS name
+# (<name>-N.<name>-headless.<ns>.svc) used in the replica-set config.
+# publishNotReadyAddresses lets members find each other before they are Ready,
+# which is required for rs.initiate() during first boot.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mongodb.headless" . }}
+  labels: {{- include "mongodb.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {{- include "mongodb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: mongodb
+{{- if .Values.metrics.enabled }}
+---
+# Separate ClusterIP service for metrics scraping only
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mongodb.fullname" . }}-metrics
+  labels:
+    {{- include "mongodb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+spec:
+  selector: {{- include "mongodb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9216
+      targetPort: metrics
+{{- end }}

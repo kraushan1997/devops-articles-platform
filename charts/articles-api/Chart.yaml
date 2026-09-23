@@ -1,0 +1,8 @@
+apiVersion: v2
+name: articles-api
+description: Articles REST API (FastAPI) - HA Deployment with HPA, PDB, anti-affinity, probes, NetworkPolicy and Prometheus monitoring
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: kraushan1997

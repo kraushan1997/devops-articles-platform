@@ -1,0 +1,86 @@
+# -- Number of replica-set members. 3 tolerates the loss of one member while
+# keeping a voting majority (2/3) -> writes continue during a node failure.
+replicas: 3
+replicaSetName: rs0
+clusterDomain: cluster.local
+
+image:
+  # Built from images/mongodb (official mongo:8.0 + rs-init.sh) and pushed by CI
+  repository: ghcr.io/kraushan1997/mongodb
+  tag: "8.0"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+auth:
+  # -- Name of an existing Secret with the keys listed below. Recommended: Terraform
+  # creates it (random passwords, never committed to git). If empty, the chart
+  # creates one from the values under auth.* (handy for a plain `helm install`).
+  existingSecret: ""
+  appUser: articles
+  appDatabase: articles
+  # Only used when existingSecret is empty. All are required in that case.
+  rootPassword: ""
+  appPassword: ""
+  metricsPassword: ""
+  # 6-1024 base64 chars, e.g. `openssl rand -base64 756`
+  keyfile: ""
+  # Key names inside the Secret
+  keys:
+    rootPassword: mongodb-root-password
+    appPassword: mongodb-app-password
+    metricsPassword: mongodb-metrics-password
+    keyfile: mongodb-keyfile
+
+persistence:
+  size: 5Gi
+  # -- "" = cluster default (k3d: local-path, EKS: gp3 created by Terraform)
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { memory: 1Gi }
+
+# WiredTiger cache; keep below the memory limit (default would be 50% of RAM-1GB of the node)
+wiredTigerCacheSizeGB: 0.25
+
+podDisruptionBudget:
+  enabled: true
+  # Keep a voting majority available during drains / node upgrades
+  minAvailable: 2
+
+# Hard anti-affinity: never two members on the same node (a node loss must not
+# take out the majority). Requires >= `replicas` schedulable nodes.
+antiAffinity: hard   # hard | soft
+
+# Spread across availability zones when the cluster has them (EKS). On k3d all
+# nodes are in one "zone" so ScheduleAnyway keeps this harmless.
+topologySpread:
+  enabled: true
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+
+metrics:
+  enabled: true
+  image:
+    repository: percona/mongodb_exporter
+    tag: "0.44.0"
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels: {}   # e.g. release: kube-prometheus-stack
+
+networkPolicy:
+  enabled: true
+  # Pods (in any namespace) with these labels may connect to MongoDB
+  allowedClientLabels:
+    app.kubernetes.io/name: articles-api
+  # Namespace allowed to scrape the exporter on :9216
+  monitoringNamespace: monitoring

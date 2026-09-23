@@ -1,0 +1,94 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mongodb.fullname" . }}
+  labels: {{- include "mongodb.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "mongodb.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# Default-deny for MongoDB pods, then allow only: other members (replication),
+# labelled API pods (any namespace) on 27017, and the monitoring namespace on 9216.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mongodb.fullname" . }}
+  labels: {{- include "mongodb.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mongodb.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "mongodb.selectorLabels" . | nindent 14 }}
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.allowedClientLabels | nindent 14 }}
+      ports:
+        - { port: 27017, protocol: TCP }
+    {{- if .Values.metrics.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - { port: 9216, protocol: TCP }
+    {{- end }}
+{{- end }}
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mongodb.fullname" . }}
+  labels:
+    {{- include "mongodb.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mongodb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metrics
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mongodb.fullname" . }}
+  labels:
+    {{- include "mongodb.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: mongodb
+      rules:
+        - alert: MongoDBDown
+          expr: mongodb_up{service="{{ include "mongodb.fullname" . }}-metrics"} == 0
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: "MongoDB member {{ "{{ $labels.pod }}" }} is down"
+        - alert: MongoDBReplicaSetMemberUnhealthy
+          expr: mongodb_rs_members_health{service="{{ include "mongodb.fullname" . }}-metrics"} == 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Replica-set member {{ "{{ $labels.member_idx }}" }} is unhealthy"
+        - alert: MongoDBReplicationLagHigh
+          expr: mongodb_mongod_replset_member_replication_lag{service="{{ include "mongodb.fullname" . }}-metrics"} > 30
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Replication lag above 30s on {{ "{{ $labels.pod }}" }}"
+{{- end }}

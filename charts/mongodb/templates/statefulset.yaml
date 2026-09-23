@@ -1,0 +1,204 @@
+{{- $fullname := include "mongodb.fullname" . -}}
+{{- $secret := include "mongodb.secretName" . -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "mongodb.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "mongodb.headless" . }}
+  replicas: {{ .Values.replicas }}
+  # Start all members together: rs.initiate() needs every member reachable, and
+  # ordered startup would block on pod-0's readiness forever.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels: {{- include "mongodb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mongodb.selectorLabels" . | nindent 8 }}
+      annotations:
+        # roll the pods when credentials change (only for chart-managed secrets)
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      affinity:
+        podAntiAffinity:
+          {{- if eq .Values.antiAffinity "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: {{- include "mongodb.selectorLabels" . | nindent 18 }}
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: {{- include "mongodb.selectorLabels" . | nindent 20 }}
+          {{- end }}
+      {{- if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: {{ .Values.topologySpread.topologyKey }}
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels: {{- include "mongodb.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # mongod refuses a keyfile readable by group/others and Secret volumes
+        # are root-owned; copy it to an emptyDir owned by uid 999 with mode 0400.
+        - name: keyfile
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c", "cp /secret/keyfile /keyfile/keyfile && chmod 0400 /keyfile/keyfile"]
+          securityContext: {{- include "mongodb.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: keyfile-secret, mountPath: /secret, readOnly: true }
+            - { name: keyfile, mountPath: /keyfile }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      containers:
+        - name: mongod
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - mongod
+            - --replSet={{ .Values.replicaSetName }}
+            - --bind_ip_all
+            - --auth
+            - --keyFile=/keyfile/keyfile
+            - --dbpath=/data/db
+            - --wiredTigerCacheSizeGB={{ .Values.wiredTigerCacheSizeGB }}
+          env:
+            # mongosh (readiness probe) writes history/config under $HOME
+            - { name: HOME, value: /tmp }
+          ports:
+            - { name: mongodb, containerPort: 27017 }
+          securityContext: {{- include "mongodb.containerSecurity" . | nindent 12 }}
+          # Liveness: is the process accepting connections at all (cheap, no auth).
+          livenessProbe:
+            tcpSocket: { port: mongodb }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # Readiness: mongod answers commands (ping needs no auth).
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 3
+          # Allow slow first start (journal/pre-allocation, recovery after crash)
+          startupProbe:
+            tcpSocket: { port: mongodb }
+            periodSeconds: 5
+            failureThreshold: 60
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+            - { name: keyfile, mountPath: /keyfile, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+
+        # Replica-set / user bootstrap (see images/mongodb/rs-init.sh). Idempotent;
+        # only pod-0 acts, then it sleeps.
+        - name: rs-init
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/rs-init.sh"]
+          securityContext: {{- include "mongodb.containerSecurity" . | nindent 12 }}
+          env:
+            - { name: HOME, value: /home/mongodb }
+            - { name: STATEFULSET_NAME, value: {{ $fullname | quote }} }
+            - { name: SERVICE_NAME, value: {{ include "mongodb.headless" . | quote }} }
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: CLUSTER_DOMAIN, value: {{ .Values.clusterDomain | quote }} }
+            - { name: REPLICA_SET, value: {{ .Values.replicaSetName | quote }} }
+            - { name: REPLICAS, value: {{ .Values.replicas | quote }} }
+            - { name: APP_USER, value: {{ .Values.auth.appUser | quote }} }
+            - { name: APP_DB, value: {{ .Values.auth.appDatabase | quote }} }
+            - name: MONGO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: {{ .Values.auth.keys.rootPassword }} } }
+            - name: APP_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: {{ .Values.auth.keys.appPassword }} } }
+            - name: METRICS_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: {{ .Values.auth.keys.metricsPassword }} } }
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: mongosh-home, mountPath: /home/mongodb }
+
+        {{- if .Values.metrics.enabled }}
+        - name: metrics
+          image: "{{ .Values.metrics.image.repository }}:{{ .Values.metrics.image.tag }}"
+          args:
+            - --collect-all
+            - --compatible-mode
+            - --web.listen-address=:9216
+          env:
+            - name: METRICS_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $secret }}, key: {{ .Values.auth.keys.metricsPassword }} } }
+            # direct connection to the local member: each pod reports its own state
+            - name: MONGODB_URI
+              value: "mongodb://metrics:$(METRICS_PASSWORD)@127.0.0.1:27017/admin?directConnection=true"
+          ports:
+            - { name: metrics, containerPort: 9216 }
+          securityContext:
+            {{- include "mongodb.containerSecurity" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          livenessProbe:
+            httpGet: { path: /, port: metrics }
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /, port: metrics }
+            periodSeconds: 15
+          resources: {{- toYaml .Values.metrics.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: keyfile-secret
+          secret:
+            secretName: {{ $secret }}
+            defaultMode: 0440
+            items:
+              - { key: {{ .Values.auth.keys.keyfile }}, path: keyfile }
+        - { name: keyfile, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+        - { name: tmp, emptyDir: {} }
+        - { name: mongosh-home, emptyDir: {} }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels: {{- include "mongodb.selectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
