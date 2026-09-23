@@ -110,7 +110,8 @@ flowchart TB
 │           │                    ecr.tf outputs.tf policies/
 │           └── 2-platform/
 ├── ansible/                     chrony (NTP) role + playbook
-├── scripts/                     bootstrap-local.sh, test-api.sh, destroy-local.sh
+├── scripts/                     bootstrap-local.{sh,ps1}, test-api.{sh,ps1}, destroy-local.sh
+├── bootstrap-local.bat          Windows one-click local environment
 ├── docker-compose.yml           local dev loop (API + single-node replica set)
 └── .github/workflows/ci.yml     test → validate → build/push → scan → GitOps bump
 ```
@@ -148,6 +149,10 @@ Terraform is split into **two layers per environment**, each with its own state:
 The split means the Kubernetes and Helm providers always have a real cluster to talk to at plan time. It also lets the in-cluster layer be rebuilt without touching the cluster.
 
 ### Option B — local k3d (quickest)
+
+**Windows (no WSL needed):** start Docker Desktop, then double-click **`bootstrap-local.bat`** in the repo root. It uses `k3d`, `kubectl` and `terraform` from your PATH, or downloads them into `.tools\`. Then it creates the cluster, installs Argo CD, waits for the sync and runs the CRUD test (`test-api.bat` re-runs just the test).
+
+**Linux / macOS / WSL:**
 
 ```bash
 # everything in one go (cluster → Argo CD → wait for sync → CRUD test)
@@ -281,7 +286,7 @@ This avoids an extra operator or Job, and it survives restarts at any stage. Rot
 | EKS | `http://$(kubectl -n articles get ingress articles-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')` |
 
 ```bash
-./scripts/test-api.sh                       # k3d
+./scripts/test-api.sh                       # k3d   (Windows: test-api.bat)
 ./scripts/test-api.sh http://<alb-hostname> # EKS
 ```
 

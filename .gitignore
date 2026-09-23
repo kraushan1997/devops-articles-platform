@@ -23,3 +23,6 @@ ansible/inventories/hosts.ini
 .idea/
 .vscode/
 rendered/
+
+# tools downloaded by scripts/bootstrap-local.ps1
+.tools/
