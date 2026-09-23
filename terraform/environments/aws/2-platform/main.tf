@@ -2,7 +2,7 @@
 terraform {
   required_version = ">= 1.10"
   required_providers {
-    aws        = { source = "hashicorp/aws", version = ">= 6.59, < 7.0" }
+    aws        = { source = "hashicorp/aws", version = "~> 6.0" }
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 3.2" }
     helm       = { source = "hashicorp/helm", version = "~> 3.3" }
     random     = { source = "hashicorp/random", version = "~> 3.9" }
@@ -10,12 +10,12 @@ terraform {
   # backend "s3" { key = "articles-platform/aws/2-platform.tfstate" ... }
 }
 
-variable "region" {
+variable "aws_region" {
   type    = string
-  default = "ap-south-1"
+  default = "us-east-1"
 }
 
-variable "cluster_name" {
+variable "eks_cluster_name" {
   type    = string
   default = "articles-eks"
 }
@@ -25,19 +25,20 @@ variable "gitops_repo_url" {
   default = "https://github.com/kraushan1997/devops-articles-platform.git"
 }
 
+# credentials come from `aws configure` / AWS_PROFILE - never hard-code keys here
 provider "aws" {
-  region = var.region
+  region = var.aws_region
 }
 
 data "aws_eks_cluster" "this" {
-  name = var.cluster_name
+  name = var.eks_cluster_name
 }
 
 locals {
   exec = {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", var.cluster_name, "--region", var.region]
+    args        = ["eks", "get-token", "--cluster-name", var.eks_cluster_name, "--region", var.aws_region]
   }
 }
 

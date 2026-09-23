@@ -6,7 +6,7 @@ A small Articles REST API. The focus is on how it runs in production: Terraform 
 |---|---|
 | **Application** | FastAPI + PyMongo async client, CRUD on `/articles`, `/healthz` `/readyz` `/metrics`, unit tests |
 | **Containers** | Multi-stage, non-root API image; MongoDB 8.0 image with a bundled replica-set bootstrap script. Both are built multi-arch and pushed to **GHCR** by CI |
-| **Cluster (Terraform)** | **Option A:** AWS **EKS** (VPC across 3 AZs, managed node group, IRSA, **Karpenter**, AWS LB Controller, EBS CSI + gp3, ECR, KMS). **Option B:** local **k3d** (3 control-plane + 3 worker nodes) |
+| **Cluster (Terraform)** | **Option A:** AWS **EKS** (VPC across 3 AZs, managed node group, Pod Identity, **Karpenter**, AWS LB Controller, EBS CSI + gp3, ECR, KMS). **Option B:** local **k3d** (3 control-plane + 3 worker nodes) |
 | **HA / no SPOF** | API ×3+ with HPA, **3-member MongoDB replica set** as a StatefulSet, PDBs, anti-affinity + zone spread, liveness/readiness/startup probes everywhere, HA control plane |
 | **Deployment** | Two Helm charts (`charts/articles-api`, `charts/mongodb`), deployed by **Argo CD** (app-of-apps) |
 | **Observability** | kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter, kube-state-metrics), ServiceMonitors, alert rules and a Grafana dashboard for the API, MongoDB exporter |
@@ -100,12 +100,15 @@ flowchart TB
 ├── terraform/
 │   ├── modules/
 │   │   ├── k3d-cluster/         HA k3d cluster via rendered k3d config
-│   │   ├── eks/                 VPC, EKS, node group, IRSA, Karpenter IAM/SQS, ECR
 │   │   └── platform/            namespaces, generated secrets, Argo CD, root app
 │   └── environments/
 │       ├── local/{1-cluster,2-platform}
-│       └── aws/{1-cluster,2-platform}   (1-cluster also installs LB controller,
-│                                         Karpenter + NodePool, gp3 StorageClass)
+│       └── aws/
+│           ├── 1-cluster/       plain aws_* resources, one file per concern:
+│           │                    provider.tf variables.tf vpc.tf eks.tf nodegroup.tf
+│           │                    addons.tf pod_identity.tf karpenter.tf k8s_addons.tf
+│           │                    ecr.tf outputs.tf policies/
+│           └── 2-platform/
 ├── ansible/                     chrony (NTP) role + playbook
 ├── scripts/                     bootstrap-local.sh, test-api.sh, destroy-local.sh
 ├── docker-compose.yml           local dev loop (API + single-node replica set)
@@ -172,7 +175,23 @@ Tear down: `./scripts/destroy-local.sh`
 
 ### Option A — AWS EKS
 
+The AWS stack uses plain `aws_*` resources (no community modules), with one file per concern:
+
+| File | What's in it |
+|---|---|
+| `provider.tf` | provider versions, `default_tags`, and helm/kubectl auth via `aws eks get-token`. **No credentials in code** |
+| `variables.tf` | `aws_region`, `vpc_cidr`, `az_count`, `eks_version`, `eks_cluster_name`, `api_allowed_cidrs`, sizes, versions |
+| `vpc.tf` | VPC, public and private subnets per AZ (`count`), IGW, NAT + EIP per AZ, route tables, subnet discovery tags |
+| `eks.tf` | cluster IAM role, KMS key, log group, `aws_eks_cluster`, OIDC provider |
+| `nodegroup.tf` | node IAM role + policies, launch template (IMDSv2, gp3), `aws_eks_node_group` |
+| `addons.tf` | managed add-ons: vpc-cni, kube-proxy, pod-identity-agent, coredns, metrics-server, EBS CSI |
+| `pod_identity.tf` | IAM roles for the EBS CSI driver and the AWS Load Balancer Controller (EKS Pod Identity) |
+| `karpenter.tf` | node role + access entry, SQS + EventBridge, controller role + policy, Helm release, EC2NodeClass, NodePool |
+| `k8s_addons.tf` | gp3 StorageClass, AWS Load Balancer Controller |
+| `ecr.tf` | ECR repositories + lifecycle policy |
+
 ```bash
+aws configure                                     # credentials live in ~/.aws, never in .tf files
 cd terraform/environments/aws/1-cluster
 cp terraform.tfvars.example terraform.tfvars      # set region, your IP in api_allowed_cidrs
 terraform init
@@ -193,7 +212,7 @@ What `1-cluster` creates:
 | Cluster | EKS 1.35, private + CIDR-restricted public endpoint, access entries (`API` mode), KMS envelope encryption for Secrets, API/audit/authenticator logs |
 | Node groups | `system` managed node group (AL2023, 3–6 × t3.large, one per AZ, IMDSv2, encrypted gp3) for CoreDNS, Karpenter and Argo CD |
 | Node autoscaling | **Karpenter** 1.14 (Pod Identity role, node role, SQS interruption queue + EventBridge rules). `EC2NodeClass` + `NodePool`: spot and on-demand, c/m/r/t instance families gen > 4, 3 AZs, consolidation, a 64-vCPU cap |
-| IAM & service accounts | IRSA roles for the AWS Load Balancer Controller and the EBS CSI driver; Pod Identity for Karpenter |
+| IAM & service accounts | EKS Pod Identity roles for the AWS Load Balancer Controller, the EBS CSI driver and Karpenter (each controller gets only its own permissions); OIDC provider kept for IRSA-only charts |
 | Add-ons | vpc-cni (with NetworkPolicy enforcement), coredns, kube-proxy, pod-identity-agent, aws-ebs-csi-driver, metrics-server |
 | Load balancing | AWS Load Balancer Controller (2 replicas + PDB). The API Ingress becomes an internet-facing ALB with IP targets |
 | Storage | default `gp3` StorageClass (encrypted, `WaitForFirstConsumer`, `Retain`) |
@@ -336,7 +355,7 @@ cd app && pip install -r requirements-dev.txt && pytest   # unit tests (in-memor
 - **Workload hardening:** the `articles` namespace enforces the **restricted** Pod Security Standard. Every container runs as non-root with a fixed UID, drops ALL capabilities, disallows privilege escalation and uses `seccompProfile: RuntimeDefault`. The API also has a read-only root filesystem, and service-account tokens aren't mounted.
 - **Network:** NetworkPolicies allow MongoDB on :27017 only from other members and the API pods, and the exporter on :9216 only from the `monitoring` namespace. The API accepts only :8080, and its egress is limited to DNS and MongoDB. These are enforced by kube-router (k3s) and the VPC CNI network-policy agent (EKS).
 - **Secrets:** Terraform generates the MongoDB root/app/metrics passwords, the replica-set keyfile and the Grafana admin password with `random_password`, then writes them straight into Kubernetes Secrets, so nothing is committed to git. Secrets are encrypted at rest: KMS envelope encryption on EKS, `--secrets-encryption` on k3s. MongoDB uses SCRAM auth, an internal keyfile, and least-privilege users (the app user only has `readWrite` on its own database).
-- **AWS:** IRSA or Pod Identity per controller (no node-wide credentials), IMDSv2 with hop limit 1, encrypted EBS and ECR, a CIDR-restricted API endpoint, and control-plane audit logs.
+- **AWS:** an EKS Pod Identity role per controller (no node-wide credentials), IMDSv2 with hop limit 1, encrypted EBS and ECR, a CIDR-restricted API endpoint, and control-plane audit logs.
 - **Supply chain:** multi-stage minimal images, CI actions pinned by commit SHA, SBOM and provenance attestations, a Trivy scan, and immutable `sha-` tags for deployments (ECR repos use immutable tags too).
 
 ---
@@ -390,6 +409,9 @@ ansible-playbook site.yml --check && ansible-playbook site.yml
 | **Terraform does bootstrap, Argo CD does the rest** | Terraform is good at infrastructure and one-time bootstrap; Argo CD handles drift correction, self-healing and auditability for workloads | Two tools to learn |
 | **Secrets from Terraform `random_password`** | Nothing sensitive in git, no extra controller | Secrets live in Terraform state, which must be encrypted. External Secrets Operator + AWS Secrets Manager would be the next step |
 | **GHCR** | Built into GitHub Actions (`GITHUB_TOKEN`); free for public images | ECR is also provisioned for an AWS-only setup |
+| **Plain `aws_*` resources for EKS (no community modules)** | Every VPC, IAM and EKS object is visible and reviewable in one place; nothing is hidden behind module defaults | More lines of code; module upgrades don't come for free |
+| **EKS Pod Identity instead of IRSA** | One trust principal (`pods.eks.amazonaws.com`) for every role, with no per-role OIDC conditions | Needs the pod-identity-agent add-on; not supported on Fargate |
+| **No Fargate profile** | DaemonSets (VPC CNI, node-exporter, EBS CSI node) and EBS volumes (MongoDB) don't work on Fargate, and Pod Identity doesn't either | Karpenter and the managed node group cover the "no nodes to manage" goal |
 | **EKS: managed node group + Karpenter** | Karpenter can't schedule itself, so a small static system pool is needed; everything else scales just-in-time on spot | Slightly more moving parts than node groups + Cluster Autoscaler |
 | **ALB (IP targets) on EKS, Traefik on k3d** | Each is the native ingress for its platform; the chart only switches `ingress.className` and annotations | — |
 | **Hard anti-affinity for MongoDB, soft for the API** | Losing one node must never take out a Mongo majority. The API should still be able to scale beyond the node count | MongoDB needs ≥ 3 schedulable nodes |
@@ -402,8 +424,8 @@ ansible-playbook site.yml --check && ansible-playbook site.yml
 The items below are either not done yet or are what I'd add next for production.
 
 1. **API validation screenshots:** run `./scripts/bootstrap-local.sh` (or the EKS steps) and save the `test-api.sh` output, the Argo CD UI and the Grafana dashboard under `docs/screenshots/`.
-2. **Live EKS run:** the AWS stack is written against the current terraform-aws-modules (EKS v21, VPC v6, IAM v6), and CI runs `terraform validate` on it. It hasn't been applied to an AWS account here, because of cost.
-3. **TLS and DNS:** add ExternalDNS (Route 53) with an IRSA role, an ACM certificate on the ALB (`certificate-arn` + `ssl-redirect` annotations are already stubbed in `gitops/values/aws/articles-api.yaml`), and cert-manager for k3d.
+2. **Live EKS run:** the AWS stack's resource arguments were checked against the AWS provider v6 docs, and CI runs `terraform validate` on it. It hasn't been applied to an AWS account here, because of cost.
+3. **TLS and DNS:** add ExternalDNS (Route 53) with a Pod Identity role, an ACM certificate on the ALB (`certificate-arn` + `ssl-redirect` annotations are already stubbed in `gitops/values/aws/articles-api.yaml`), and cert-manager for k3d.
 4. **Secret management:** External Secrets Operator reading from AWS Secrets Manager, or SOPS/age for git-encrypted secrets, so passwords never sit in Terraform state. Plus rotation.
 5. **MongoDB day-2:** scheduled backups (Percona Backup for MongoDB to S3, or Velero with EBS snapshots), a tested restore, and TLS between clients and members. A move to an operator is worth considering.
 6. **Logs and traces:** Loki with Grafana Alloy for centralised logs, and OpenTelemetry auto-instrumentation plus Tempo for traces. Alertmanager receivers (Slack/PagerDuty) need to be configured.
