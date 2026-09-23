@@ -2,4 +2,4 @@
 # git-SHA tag of the image it just built and pushed. Argo CD then rolls it out.
 image:
   repository: ghcr.io/kraushan1997/articles-api
-  tag: latest
+  tag: sha-8ae5ae5
