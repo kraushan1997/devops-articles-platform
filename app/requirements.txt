@@ -1,0 +1,8 @@
+# Pinned for reproducible builds. PyMongo's native async client replaces Motor
+# (Motor is deprecated upstream in favour of pymongo.AsyncMongoClient).
+fastapi==0.141.1
+uvicorn[standard]==0.46.0
+pymongo==4.18.1
+pydantic==2.13.3
+pydantic-settings==2.14.0
+prometheus-fastapi-instrumentator==8.1.0
