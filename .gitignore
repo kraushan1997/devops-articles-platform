@@ -1,0 +1,25 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+**/.k3d/
+.terraform.lock.hcl
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Ansible
+ansible/inventories/hosts.ini
+
+# Misc
+.DS_Store
+.idea/
+.vscode/
+rendered/

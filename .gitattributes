@@ -1,0 +1,2 @@
+# keep shell scripts LF even when cloned on Windows (they run in WSL/containers)
+*.sh text eol=lf
