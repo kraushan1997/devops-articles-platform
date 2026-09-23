@@ -1,0 +1,4 @@
+region             = "ap-south-1"
+cluster_name       = "articles-eks"
+api_allowed_cidrs  = ["203.0.113.10/32"] # your public IP
+single_nat_gateway = true                # demo account: 1 NAT instead of 3

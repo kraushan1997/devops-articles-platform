@@ -1,0 +1,85 @@
+# Layer 2 (AWS): identical platform bootstrap as local, pointed at gitops/apps/aws.
+terraform {
+  required_version = ">= 1.10"
+  required_providers {
+    aws        = { source = "hashicorp/aws", version = ">= 6.59, < 7.0" }
+    kubernetes = { source = "hashicorp/kubernetes", version = "~> 3.2" }
+    helm       = { source = "hashicorp/helm", version = "~> 3.3" }
+    random     = { source = "hashicorp/random", version = "~> 3.9" }
+  }
+  # backend "s3" { key = "articles-platform/aws/2-platform.tfstate" ... }
+}
+
+variable "region" {
+  type    = string
+  default = "ap-south-1"
+}
+
+variable "cluster_name" {
+  type    = string
+  default = "articles-eks"
+}
+
+variable "gitops_repo_url" {
+  type    = string
+  default = "https://github.com/kraushan1997/devops-articles-platform.git"
+}
+
+provider "aws" {
+  region = var.region
+}
+
+data "aws_eks_cluster" "this" {
+  name = var.cluster_name
+}
+
+locals {
+  exec = {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", var.cluster_name, "--region", var.region]
+  }
+}
+
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  exec {
+    api_version = local.exec.api_version
+    command     = local.exec.command
+    args        = local.exec.args
+  }
+}
+
+provider "helm" {
+  kubernetes = {
+    host                   = data.aws_eks_cluster.this.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+    exec                   = local.exec
+  }
+}
+
+module "platform" {
+  source = "../../../modules/platform"
+
+  environment     = "aws"
+  gitops_repo_url = var.gitops_repo_url
+  argocd_ha       = true
+
+  # ALB controller injects readiness gates: a pod only counts as Ready once the
+  # ALB target group reports it healthy -> zero-downtime rolling updates
+  app_namespace_extra_labels = { "elbv2.k8s.aws/pod-readiness-gate-inject" = "enabled" }
+}
+
+output "argocd_admin_password_cmd" {
+  value = module.platform.argocd_admin_password_cmd
+}
+
+output "api_endpoint_cmd" {
+  value = "kubectl -n articles get ingress articles-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+}
+
+output "grafana_admin_password" {
+  value     = module.platform.grafana_admin_password
+  sensitive = true
+}
