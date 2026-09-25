@@ -7,6 +7,13 @@
 param([string]$BaseUrl = "http://localhost:8080")
 $ErrorActionPreference = "Stop"
 
+# Save everything printed below as evidence for the assignment (section 9)
+$outDir = Join-Path (Split-Path -Parent $PSScriptRoot) "docs\screenshots"
+New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+$log = Join-Path $outDir "api-test-output.txt"
+Start-Transcript -Path $log -Force | Out-Null
+Write-Host "Articles API test - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz') - $BaseUrl"
+
 function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 
 function Call([string]$Method, [string]$Path, $Body = $null) {
@@ -55,3 +62,6 @@ if ($r.Code -ne 204) { throw "delete failed" }
 Step "6. READ after delete (expect 404)"
 $r = Call GET "/articles/$id"
 if ($r.Code -eq 404) { Write-Host "`nAll CRUD operations passed." -ForegroundColor Green }
+
+Stop-Transcript | Out-Null
+Write-Host "`nOutput saved to $log" -ForegroundColor Gray
