@@ -311,7 +311,17 @@ curl -s -X DELETE $BASE/articles/<id> -o /dev/null -w '%{http_code}\n'          
 | `DELETE /articles/{id}` | 204, or 404 |
 | `/healthz`, `/readyz`, `/metrics` | liveness (process only), readiness (Mongo ping), Prometheus metrics |
 
-Screenshots and a recording of a run go in [`docs/screenshots/`](docs/screenshots/).
+### Validation evidence (local k3d run)
+
+All five operations were run against the Ingress endpoint (`http://localhost:8080` → k3d load balancer → Traefik → Service → API pods). The full text output is in [`docs/screenshots/api-test-output.txt`](docs/screenshots/api-test-output.txt).
+
+| | |
+|---|---|
+| **Create, List, Read**: 201, 200, 200 | ![CRUD 1](docs/screenshots/01-api-crud-create-list-read.png) |
+| **Update, Delete, Read-after-delete**: 200, 204, 404 | ![CRUD 2](docs/screenshots/02-api-crud-update-delete.png) |
+| **Pods spread across nodes**: 3 API + 3 MongoDB pods, one of each per agent node (anti-affinity in action) | ![pods](docs/screenshots/03-pods-spread-across-nodes.png) |
+| **Argo CD**: root, kube-prometheus-stack, mongodb and articles-api all Synced / Healthy | ![argocd](docs/screenshots/04-argocd-apps-healthy.png) |
+| **Grafana** (kube-prometheus-stack) | ![grafana](docs/screenshots/05-grafana.png) |
 
 **Failover demo:** delete the primary with `kubectl -n articles delete pod mongodb-0` while running `watch ./scripts/test-api.sh`. A new primary is elected within seconds and the API keeps serving, because the driver uses retryable writes and the replica-set seed list.
 
@@ -428,7 +438,7 @@ ansible-playbook site.yml --check && ansible-playbook site.yml
 
 The items below are either not done yet or are what I'd add next for production.
 
-1. **API validation screenshots:** run `./scripts/bootstrap-local.sh` (or the EKS steps) and save the `test-api.sh` output, the Argo CD UI and the Grafana dashboard under `docs/screenshots/`.
+1. **API validation:** ✅ done on the local k3d cluster (see [Validation evidence](#validation-evidence-local-k3d-run)). Still to add: a screenshot of the *Articles API* Grafana dashboard with live traffic, and a run against the EKS ALB endpoint.
 2. **Live EKS run:** the AWS stack's resource arguments were checked against the AWS provider v6 docs, and CI runs `terraform validate` on it. It hasn't been applied to an AWS account here, because of cost.
 3. **TLS and DNS:** add ExternalDNS (Route 53) with a Pod Identity role, an ACM certificate on the ALB (`certificate-arn` + `ssl-redirect` annotations are already stubbed in `gitops/values/aws/articles-api.yaml`), and cert-manager for k3d.
 4. **Secret management:** External Secrets Operator reading from AWS Secrets Manager, or SOPS/age for git-encrypted secrets, so passwords never sit in Terraform state. Plus rotation.

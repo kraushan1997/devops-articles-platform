@@ -33,7 +33,9 @@ function Call([string]$Method, [string]$Path, $Body = $null) {
     $content = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
   }
   Write-Host "HTTP $code"
-  if ($content) { try { $content | ConvertFrom-Json | ConvertTo-Json -Depth 5 | Write-Host } catch { Write-Host $content } }
+  # -InputObject (not the pipeline) so Windows PowerShell 5.1 prints JSON arrays as
+  # arrays instead of wrapping them in {"value": [...], "Count": n}
+  if ($content) { try { ConvertTo-Json -InputObject ($content | ConvertFrom-Json) -Depth 5 | Write-Host } catch { Write-Host $content } }
   return @{ Code = $code; Body = $content }
 }
 
@@ -64,4 +66,13 @@ $r = Call GET "/articles/$id"
 if ($r.Code -eq 404) { Write-Host "`nAll CRUD operations passed." -ForegroundColor Green }
 
 Stop-Transcript | Out-Null
+
+# Strip the transcript header/footer (it contains the Windows user and machine name)
+$clean = @(); $skip = $false
+foreach ($l in (Get-Content $log)) {
+  if ($l -match '^\*{10,}$') { $skip = -not $skip; continue }
+  if ($skip -or $l -match '^(Transcript started|PS>|Windows PowerShell transcript)') { continue }
+  $clean += $l
+}
+Set-Content -Path $log -Value $clean -Encoding UTF8
 Write-Host "`nOutput saved to $log" -ForegroundColor Gray

@@ -1,9 +1,14 @@
 # API validation evidence
 
-Add here after running `./scripts/test-api.sh` against the Ingress / LoadBalancer:
+Captured from the local k3d cluster (1 server + 3 agents), deployed by Argo CD.
 
-- `01-crud-test.png` — full output of `test-api.sh` (create, list, read, update, delete, 404)
-- `02-pods.png` — `kubectl -n articles get pods -o wide` (pods spread across nodes/zones)
-- `03-argocd.png` — Argo CD applications Synced / Healthy
-- `04-grafana.png` — "Articles API" dashboard
-- `05-failover.png` (optional) — API still serving after `kubectl -n articles delete pod mongodb-0`
+| File | Shows |
+|---|---|
+| `api-test-output.txt` | Full text output of `test-api.bat` / `scripts/test-api.ps1`: all five operations plus a read-after-delete |
+| `01-api-crud-create-list-read.png` | POST (201), GET list (200), GET by id (200) through the Ingress on `localhost:8080` |
+| `02-api-crud-update-delete.png` | PUT (200), DELETE (204), GET after delete (404), "All CRUD operations passed" |
+| `03-pods-spread-across-nodes.png` | `kubectl -n articles get pods -o wide`: API and MongoDB pods on three different agent nodes |
+| `04-argocd-apps-healthy.png` | Argo CD: root app-of-apps plus kube-prometheus-stack, mongodb and articles-api, all Synced/Healthy |
+| `05-grafana.png` | Grafana from kube-prometheus-stack |
+
+Re-create: `bootstrap-local.bat` (Windows) or `./scripts/bootstrap-local.sh`, then `test-api.bat` / `./scripts/test-api.sh`.
