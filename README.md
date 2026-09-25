@@ -323,7 +323,7 @@ All five operations were run against the Ingress endpoint (`http://localhost:808
 | **Argo CD**: root, kube-prometheus-stack, mongodb and articles-api all Synced / Healthy | ![argocd](docs/screenshots/04-argocd-apps-healthy.png) |
 | **Grafana** (kube-prometheus-stack) | ![grafana](docs/screenshots/05-grafana.png) |
 
-**Failover demo:** delete the primary with `kubectl -n articles delete pod mongodb-0` while running `watch ./scripts/test-api.sh`. A new primary is elected within seconds and the API keeps serving, because the driver uses retryable writes and the replica-set seed list.
+**Failover demo:** find the primary (`kubectl -n articles exec mongodb-0 -c mongod -- mongosh --quiet --eval "db.hello().primary"`), delete that pod, wait 10-15 s and re-run the test. A secondary is elected primary and the API keeps serving. Requests sent during the election itself can fail (the app's server-selection timeout is 3 s); `retryWrites` covers a write interrupted mid-flight.
 
 ### Local dev without Kubernetes
 
