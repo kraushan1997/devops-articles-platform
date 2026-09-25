@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-command local environment:
-#   1. Terraform layer 1  -> k3d cluster (3 servers + 3 agents)
+#   1. Terraform layer 1  -> k3d cluster (1 server + 3 agents)
 #   2. Terraform layer 2  -> namespaces, secrets, Argo CD, root GitOps app
 #   3. wait for Argo CD to sync MongoDB + API + monitoring
 #   4. run the API test
@@ -15,6 +15,9 @@ done
 echo "==> [1/4] k3d cluster"
 $TF -chdir="$ROOT/terraform/environments/local/1-cluster" init -input=false
 $TF -chdir="$ROOT/terraform/environments/local/1-cluster" apply -auto-approve
+echo "    waiting for the Kubernetes API to be ready ..."
+for i in $(seq 1 36); do kubectl api-resources >/dev/null 2>&1 && break; sleep 10; done
+kubectl api-resources >/dev/null 2>&1 || { echo "API server not healthy: k3d cluster delete articles, remove local tfstate files, re-run"; exit 1; }
 
 echo "==> [2/4] platform (Argo CD + secrets)"
 $TF -chdir="$ROOT/terraform/environments/local/2-platform" init -input=false

@@ -6,7 +6,7 @@ A small Articles REST API. The focus is on how it runs in production: Terraform 
 |---|---|
 | **Application** | FastAPI + PyMongo async client, CRUD on `/articles`, `/healthz` `/readyz` `/metrics`, unit tests |
 | **Containers** | Multi-stage, non-root API image; MongoDB 8.0 image with a bundled replica-set bootstrap script. Both are built multi-arch and pushed to **GHCR** by CI |
-| **Cluster (Terraform)** | **Option A:** AWS **EKS** (VPC across 3 AZs, managed node group, Pod Identity, **Karpenter**, AWS LB Controller, EBS CSI + gp3, ECR, KMS). **Option B:** local **k3d** (3 control-plane + 3 worker nodes) |
+| **Cluster (Terraform)** | **Option A:** AWS **EKS** (VPC across 3 AZs, managed node group, Pod Identity, **Karpenter**, AWS LB Controller, EBS CSI + gp3, ECR, KMS). **Option B:** local **k3d** (1 control-plane + 3 worker nodes; 3 control-plane optional) |
 | **HA / no SPOF** | API ×3+ with HPA, **3-member MongoDB replica set** as a StatefulSet, PDBs, anti-affinity + zone spread, liveness/readiness/startup probes everywhere, HA control plane |
 | **Deployment** | Two Helm charts (`charts/articles-api`, `charts/mongodb`), deployed by **Argo CD** (app-of-apps) |
 | **Observability** | kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter, kube-state-metrics), ServiceMonitors, alert rules and a Grafana dashboard for the API, MongoDB exporter |
@@ -163,7 +163,7 @@ or step by step:
 
 ```bash
 cd terraform/environments/local/1-cluster
-terraform init && terraform apply        # k3d: 3 servers (HA etcd) + 3 agents in zone-a/b/c
+terraform init && terraform apply        # k3d: 1 server + 3 agents in zone-a/b/c (-var servers=3 for HA etcd)
 kubectl get nodes -L topology.kubernetes.io/zone
 
 cd ../2-platform
@@ -172,7 +172,7 @@ kubectl -n argocd get applications -w    # wait for Synced/Healthy
 ```
 
 What the local cluster looks like:
-- **3 server nodes** running embedded etcd, so the control plane has no single point of failure. They're tainted so application pods stay off them.
+- **1 server node** by default, tainted so application pods stay off it. `-var servers=3` gives an HA embedded-etcd control plane, but multi-server k3d clusters on Docker Desktop often lose etcd quorum after a Docker or Windows restart (the node containers get new IPs), so 1 is the reliable laptop default. The EKS stack has a multi-AZ managed control plane either way.
 - **3 agent nodes**, each labelled with its own `topology.kubernetes.io/zone`. That way the zone-spread rules behave the same as on a 3-AZ cloud cluster.
 - Host ports `8080→80` and `8443→443` lead to the Traefik ingress. Kubernetes Secrets are encrypted at rest (`--secrets-encryption`).
 
@@ -328,7 +328,7 @@ cd app && pip install -r requirements-dev.txt && pytest   # unit tests (in-memor
 
 | Layer | SPOF removed by |
 |---|---|
-| Control plane | EKS: AWS-managed multi-AZ control plane. k3d: **3 servers with embedded etcd** (quorum 2/3) |
+| Control plane | EKS: AWS-managed multi-AZ control plane. k3d: optional 3 servers with embedded etcd (`-var servers=3`; default 1 for laptop reliability) |
 | Worker nodes | ≥ 3 nodes across 3 AZs/zones; Karpenter replaces failed or interrupted nodes (spot interruption queue) |
 | API pods | `replicaCount: 3`, HPA 3→6 (local) or 3→20 (EKS). **PDB** `maxUnavailable: 1`. **Pod anti-affinity** (preferred, by hostname) and **topologySpreadConstraints** (zone + hostname) |
 | Rollouts | `maxSurge: 1, maxUnavailable: 0`, startup + readiness probes, `preStop` sleep so endpoints drain before SIGTERM, ALB pod readiness gates on EKS |

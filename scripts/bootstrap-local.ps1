@@ -3,7 +3,7 @@
 
     1. makes sure Docker Desktop's engine is running (starts it if needed)
     2. uses k3d / kubectl / terraform from PATH, or downloads them into .tools\
-    3. Terraform layer 1 -> k3d cluster (3 servers + 3 agents)
+    3. Terraform layer 1 -> k3d cluster (1 server + 3 agents)
     4. Terraform layer 2 -> namespaces, secrets, Argo CD, root GitOps app
     5. waits for Argo CD to sync kube-prometheus-stack, MongoDB and the API
     6. runs the CRUD test (scripts\test-api.ps1)
@@ -83,6 +83,23 @@ $L1 = Join-Path $Root "terraform\environments\local\1-cluster"
 Tf $L1 @("init", "-input=false")
 Tf $L1 @("apply", "-auto-approve", "-input=false")
 kubectl config use-context k3d-articles | Out-Null
+
+# The API server can take a while to become fully ready (and a cluster left over
+# from before a reboot may never recover). Wait until every API group answers.
+Write-Host "  waiting for the Kubernetes API to be ready ..."
+$deadline = (Get-Date).AddMinutes(6)
+while ($true) {
+  kubectl api-resources *> $null
+  if ($LASTEXITCODE -eq 0) { break }
+  if ((Get-Date) -gt $deadline) {
+    Fail ("The cluster's API server is not healthy (often a k3d cluster left over from before a restart).`n" +
+          "  Recreate it and run this script again:`n" +
+          "    .tools\k3d.exe cluster delete articles      (or: k3d cluster delete articles)`n" +
+          "    del terraform\environments\local\1-cluster\terraform.tfstate`n" +
+          "    del terraform\environments\local\2-platform\terraform.tfstate")
+  }
+  Start-Sleep 10
+}
 kubectl get nodes -L topology.kubernetes.io/zone
 
 # ------------------------------------------------------------------ 4. platform
