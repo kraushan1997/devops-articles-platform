@@ -236,14 +236,3 @@ export TF_STATE_BUCKET=<your-s3-bucket>
 
 This deletes the load balancer, the Karpenter nodes, both Terraform steps, and the leftover disks, in the right order.
 
----
-
-## What's pending
-
-- **HTTPS + custom domain.** The API is plain HTTP on the load balancer address today (add an ACM certificate + Route 53)
-- **One NAT gateway per AZ.** The demo used one to save cost
-- **Restrict who can reach the EKS API.** It's open to all IPs for the demo
-- **Store secrets in AWS Secrets Manager** instead of Terraform state
-- **MongoDB backups** to S3, and a tested restore
-- **Central logging and tracing** (e.g. Loki / CloudWatch, OpenTelemetry)
-- **Separate dev / staging / prod environments**
