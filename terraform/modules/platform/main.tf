@@ -1,7 +1,8 @@
 /**
  * platform
  * --------
- * Cluster-agnostic bootstrap shared by the local (k3d) and AWS (EKS) stacks.
+ * Cluster bootstrap for the EKS stack (layer 2), kept as a module so another
+ * environment (e.g. staging) can reuse it with a different gitops/apps/<env> folder.
  * Terraform owns only what must exist *before* GitOps can take over:
  *
  *   - namespaces (with Pod Security Admission labels)
@@ -94,7 +95,7 @@ resource "helm_release" "argocd" {
     configs = {
       params = { "server.insecure" = true } # TLS terminates at ingress / port-forward
     }
-    # HA mode on EKS (multiple replicas + redis-ha); single replicas on k3d
+    # argocd_ha = true -> multiple replicas + redis-ha
     redis-ha   = { enabled = var.argocd_ha }
     controller = { replicas = 1 }
     server = {

@@ -33,7 +33,7 @@ auth:
 
 persistence:
   size: 5Gi
-  # -- "" = cluster default (k3d: local-path, EKS: gp3 created by Terraform)
+  # -- "" = cluster default (EKS: the encrypted gp3 StorageClass created by Terraform layer 2)
   storageClass: ""
   accessModes: [ReadWriteOnce]
 
@@ -53,8 +53,8 @@ podDisruptionBudget:
 # take out the majority). Requires >= `replicas` schedulable nodes.
 antiAffinity: hard   # hard | soft
 
-# Spread across availability zones when the cluster has them (EKS). On k3d all
-# nodes are in one "zone" so ScheduleAnyway keeps this harmless.
+# Spread the members across availability zones (EKS: us-east-1a/b/c), so losing
+# a whole AZ still leaves a voting majority.
 topologySpread:
   enabled: true
   topologyKey: topology.kubernetes.io/zone

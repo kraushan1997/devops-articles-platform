@@ -42,8 +42,8 @@ service:
 
 ingress:
   enabled: true
-  # k3d -> traefik (bundled with k3s); EKS -> alb (AWS Load Balancer Controller)
-  className: traefik
+  # alb -> the AWS Load Balancer Controller creates an internet-facing ALB
+  className: alb
   annotations: {}
   host: ""          # empty = match any host (use the LB hostname/IP directly)
   tls: []

@@ -16,15 +16,16 @@ terraform {
     }
   }
 
-  # Remote state (recommended). Create the bucket once, then uncomment.
-  # use_lockfile = native S3 state locking (Terraform >= 1.10), no DynamoDB needed.
-  # backend "s3" {
-  #   bucket       = "<your-tf-state-bucket>"
-  #   key          = "articles-platform/aws/1-cluster.tfstate"
-  #   region       = "us-east-1"
-  #   encrypt      = true
-  #   use_lockfile = true
-  # }
+  # Remote state: S3 with native lockfile locking (Terraform >= 1.10, no DynamoDB).
+  # scripts/deploy-aws.sh writes it as backend_override.tf (git-ignored) so the
+  # bucket name is not hard-coded here:
+  #   backend "s3" {
+  #     bucket       = "<your-tf-state-bucket>"
+  #     key          = "articles-platform/aws/1-cluster.tfstate"
+  #     region       = "us-east-1"
+  #     encrypt      = true
+  #     use_lockfile = true
+  #   }
 }
 
 # Credentials are NOT set here. Terraform reads them from the standard AWS chain:

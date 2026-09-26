@@ -1,9 +1,9 @@
 variable "environment" {
-  description = "Selects gitops/apps/<environment> (local | aws)"
+  description = "Selects gitops/apps/<environment> (currently: aws)"
   type        = string
   validation {
-    condition     = contains(["local", "aws"], var.environment)
-    error_message = "environment must be 'local' or 'aws'."
+    condition     = contains(["aws"], var.environment)
+    error_message = "environment must be 'aws'."
   }
 }
 

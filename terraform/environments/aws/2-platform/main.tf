@@ -1,4 +1,5 @@
-# Layer 2 (AWS): identical platform bootstrap as local, pointed at gitops/apps/aws.
+# Layer 2 (AWS): Kubernetes-side bootstrap, applied after layer 1 has created the cluster.
+# Argo CD + root app (pointed at gitops/apps/aws), namespaces, secrets, StorageClass, Karpenter pools.
 terraform {
   required_version = ">= 1.10"
   required_providers {

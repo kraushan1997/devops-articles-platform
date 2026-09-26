@@ -1,0 +1,36 @@
+# ./scripts/failover-test.sh  (2026-09-26, EKS us-east-1)
+# 60 s of POST /articles through the ALB; the MongoDB PRIMARY pod is deleted at t=10 s.
+
+API: http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com
+primary before: mongodb-0
+14:49:10 deleting primary pod mongodb-0
+primary after:  mongodb-0
+requests by HTTP status:
+    111 201
+non-201 responses (if any):
+  none
+
+# mongod logs: elections
+== mongodb-0
+2026-09-26T14:50:01.508+00:00 Starting an election for a priority takeover
+2026-09-26T14:50:01.549+00:00 Transition to primary complete; database writes are now permitted
+== mongodb-1
+2026-09-26T14:49:11.177+00:00 Starting an election due to step up request
+2026-09-26T14:49:11.210+00:00 Transition to primary complete; database writes are now permitted
+2026-09-26T14:50:01.516+00:00 Stepping down from primary, because a new term has begun
+== mongodb-2
+
+# Reading it:
+#  14:49:10  mongodb-0 (primary) gets SIGTERM, steps down and hands over ("step up request")
+#  14:49:11  mongodb-1 is primary ~1 s later; writes continue (w=majority, retryWrites)
+#  14:50:01  the recreated mongodb-0 has caught up and, having the highest priority,
+#            takes the primary role back ("priority takeover")
+#  Result: 111/111 writes succeeded, 0 errors seen by clients.
+
+# PVC-backed EBS volumes (encrypted gp3, one per AZ for MongoDB)
+$ aws ec2 describe-volumes --filters Name=tag-key,Values=kubernetes.io/created-for/pvc/name
+vol-0083a5a8e36d6b2a9  50 GiB  gp3  encrypted  us-east-1c  prometheus-...-prometheus-1
+vol-0fc1d25c2108869be  20 GiB  gp3  encrypted  us-east-1c  data-mongodb-2
+vol-0951f4294d132ff96  50 GiB  gp3  encrypted  us-east-1a  prometheus-...-prometheus-0
+vol-0c0653ab5d3af2b45  20 GiB  gp3  encrypted  us-east-1b  data-mongodb-1
+vol-02660c73a7fc71f05  20 GiB  gp3  encrypted  us-east-1a  data-mongodb-0

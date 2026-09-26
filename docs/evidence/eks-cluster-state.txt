@@ -1,0 +1,106 @@
+# ./scripts/collect-evidence.sh  (AWS CloudShell, 2026-09-26T14:52:08Z)
+EKS evidence: cluster=articles-eks region=us-east-1 at 2026-09-26T14:52:08Z
+
+### Cluster
+$ aws eks describe-cluster
+------------------------------------------------------------------------
+|                            DescribeCluster                           |
++--------------+-----------+---------------------+---------+-----------+
+|     name     | platform  |  secretsEncryption  | status  |  version  |
++--------------+-----------+---------------------+---------+-----------+
+|  articles-eks|  eks.24   |  secrets            |  ACTIVE |  1.35     |
++--------------+-----------+---------------------+---------+-----------+
+
+### Nodes, one per availability zone
+$ kubectl get nodes -L topology.kubernetes.io/zone,node.kubernetes.io/instance-type,karpenter.sh/capacity-type
+NAME                          STATUS   ROLES    AGE   VERSION               ZONE         INSTANCE-TYPE   CAPACITY-TYPE
+ip-10-0-19-23.ec2.internal    Ready    <none>   40m   v1.35.8-eks-f4fc4f1   us-east-1a   t3.large
+ip-10-0-40-41.ec2.internal    Ready    <none>   40m   v1.35.8-eks-f4fc4f1   us-east-1b   t3.large
+ip-10-0-52-171.ec2.internal   Ready    <none>   40m   v1.35.8-eks-f4fc4f1   us-east-1c   t3.large
+
+### GitOps: Argo CD applications
+$ kubectl -n argocd get applications
+NAME                    SYNC     HEALTH    REVISION
+articles-api            Synced   Healthy   bc5d46ae284150fa8b02e71182860a29c5cad68a
+kube-prometheus-stack   Synced   Healthy   <none>
+mongodb                 Synced   Healthy   bc5d46ae284150fa8b02e71182860a29c5cad68a
+root                    Synced   Healthy   bc5d46ae284150fa8b02e71182860a29c5cad68a
+
+### Workloads spread across nodes/AZs
+$ kubectl -n articles get pods -o wide
+POD                             READY            STATUS    NODE
+articles-api-5dd6b8996f-dgtvv   true             Running   ip-10-0-52-171.ec2.internal
+articles-api-5dd6b8996f-k22sh   true             Running   ip-10-0-19-23.ec2.internal
+articles-api-5dd6b8996f-qpl5k   true             Running   ip-10-0-40-41.ec2.internal
+mongodb-0                       true,true,true   Running   ip-10-0-19-23.ec2.internal
+mongodb-1                       true,true,true   Running   ip-10-0-40-41.ec2.internal
+mongodb-2                       true,true,true   Running   ip-10-0-52-171.ec2.internal
+
+### Storage, ingress, autoscaling, disruption budgets
+$ kubectl -n articles get pvc,ingress,hpa,pdb
+PVC              STATUS   SIZE   CLASS
+data-mongodb-0   Bound    20Gi   gp3
+data-mongodb-1   Bound    20Gi   gp3
+data-mongodb-2   Bound    20Gi   gp3
+NAME           CLASS   HOSTS   ADDRESS                                                                 PORTS   AGE
+articles-api   alb     *       k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com   80      22m
+NAME           REFERENCE                 TARGETS                        MINPODS   MAXPODS   REPLICAS   AGE
+articles-api   Deployment/articles-api   cpu: 2%/70%, memory: 18%/80%   3         20        3          22m
+NAME           MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+articles-api   N/A             1                 1                     22m
+mongodb        2               N/A               1                     22m
+
+### MongoDB replica set members
+$ rs.status() via mongosh
+mongodb-0 PRIMARY health=1
+mongodb-1 SECONDARY health=1
+mongodb-2 SECONDARY health=1
+
+### Karpenter node pool
+$ kubectl get nodepools,ec2nodeclasses,nodeclaims
+NAME                            NODECLASS   NODES   READY   AGE
+nodepool.karpenter.sh/default   default     0       True    25m
+
+NAME                                     READY   AGE
+ec2nodeclass.karpenter.k8s.aws/default   True    25m
+# (0 nodes: the c6a.4xlarge launched for the scale-out test at 14:35 was consolidated away)
+
+### Prometheus is scraping the API
+$ PromQL: up / http_requests_total
+PromQL: up{namespace="articles"}
+  {'job': 'articles-api', 'pod': 'articles-api-5dd6b8996f-dgtvv'} = 1
+  {'job': 'articles-api', 'pod': 'articles-api-5dd6b8996f-qpl5k'} = 1
+  {'job': 'mongodb-metrics', 'pod': 'mongodb-1'} = 1
+  {'job': 'articles-api', 'pod': 'articles-api-5dd6b8996f-k22sh'} = 1
+  {'job': 'mongodb-metrics', 'pod': 'mongodb-2'} = 1
+  {'job': 'mongodb-metrics', 'pod': 'mongodb-0'} = 1
+PromQL: sum by (handler, status) (http_requests_total{namespace="articles", handler=~"/articles.*"})
+  {'handler': '/articles', 'status': '2xx'} = 116
+  {'handler': '/articles/{article_id}', 'status': '2xx'} = 117
+  {'handler': '/articles/{article_id}', 'status': '4xx'} = 2
+
+### Time sync on the nodes (NTP)
+$ SSM Run Command: chronyc tracking
+-- i-0af9fc0625bf618b5
+Reference ID    : A9FEA97B (169.254.169.123)
+System time     : 0.000008409 seconds fast of NTP time
+Leap status     : Normal
+
+-- i-0e43654d53c675fdb
+Reference ID    : A9FEA97B (169.254.169.123)
+System time     : 0.000002498 seconds fast of NTP time
+Leap status     : Normal
+
+-- i-0b7ba6ff4d380f47f
+Reference ID    : A9FEA97B (169.254.169.123)
+System time     : 0.000001197 seconds fast of NTP time
+Leap status     : Normal
+
+### Karpenter scale-out test (14:34 UTC)
+$ kubectl create deployment inflate --image=public.ecr.aws/eks-distro/kubernetes/pause:3.7 ; kubectl set resources deployment inflate --requests=cpu=1 ; kubectl scale deployment inflate --replicas=8
+$ kubectl get nodeclaims      # 45 s later
+NAME            TYPE          CAPACITY    ZONE         NODE                          READY   AGE
+default-gzd5c   c6a.4xlarge   on-demand   us-east-1a   ip-10-0-20-150.ec2.internal   True    34s
+      8 Running
+$ kubectl delete deployment inflate ; kubectl get nodeclaims   # a few minutes later
+No resources found

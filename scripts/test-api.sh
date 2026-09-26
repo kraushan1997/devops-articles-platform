@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Exercise all five Articles endpoints against a running deployment.
 #
-#   ./scripts/test-api.sh                         # k3d: http://localhost:8080
-#   ./scripts/test-api.sh http://<alb-hostname>   # EKS
+#   ./scripts/test-api.sh                         # finds the ALB from the Ingress (needs kubectl)
+#   ./scripts/test-api.sh http://<alb-hostname>   # explicit URL
 #
 # Output is formatted for screenshots / screen recording (assignment section 9).
 set -euo pipefail
-BASE="${1:-http://localhost:8080}"
+if [ -n "${1:-}" ]; then
+  BASE="$1"
+else
+  ALB=$(kubectl -n articles get ingress articles-api -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+  [ -n "$ALB" ] || { echo "Ingress has no ALB hostname yet"; exit 1; }
+  BASE="http://$ALB"
+fi
 RESP="$(mktemp)"; trap 'rm -f "$RESP"' EXIT
 pretty() { if command -v jq >/dev/null; then jq .; else python3 -m json.tool; fi; }
 step()   { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }

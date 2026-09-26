@@ -5,7 +5,6 @@
 *.tfvars
 !*.tfvars.example
 crash.log
-**/.k3d/
 .terraform.lock.hcl
 
 # Python
@@ -24,5 +23,5 @@ ansible/inventories/hosts.ini
 .vscode/
 rendered/
 
-# tools downloaded by scripts/bootstrap-local.ps1
-.tools/
+# CloudShell / local-only backend and variable overrides
+*_override.tf

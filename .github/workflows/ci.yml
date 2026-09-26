@@ -62,7 +62,7 @@ jobs:
       - name: Render every environment and validate against the Kubernetes schema
         run: |
           mkdir -p rendered
-          for env in local aws; do
+          for env in aws; do
             helm template mongodb charts/mongodb -n articles \
               -f gitops/values/common/mongodb.yaml -f gitops/values/$env/mongodb.yaml > rendered/mongodb-$env.yaml
             helm template articles-api charts/articles-api -n articles \
@@ -81,8 +81,6 @@ jobs:
       fail-fast: false
       matrix:
         root:
-          - terraform/environments/local/1-cluster
-          - terraform/environments/local/2-platform
           - terraform/environments/aws/1-cluster
           - terraform/environments/aws/2-platform
     steps:

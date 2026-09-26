@@ -1,0 +1,88 @@
+# ./scripts/test-api.sh  (run from AWS CloudShell, 2026-09-26 14:47 UTC, through the public ALB)
+
+==> 0. Health
+$ curl -X GET http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/readyz
+HTTP 200
+{
+  "status": "ready"
+}
+
+==> 1. CREATE  POST /articles
+$ curl -X POST http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/articles -d '{"title":"Hello Kubernetes","content":"Running on a 3-member MongoDB replica set","author":"raushan","tags":["k8s","mongodb"]}'
+HTTP 201
+{
+  "title": "Hello Kubernetes",
+  "content": "Running on a 3-member MongoDB replica set",
+  "author": "raushan",
+  "tags": [
+    "k8s",
+    "mongodb"
+  ],
+  "id": "6ab7daf53ffe4bf2352135d7",
+  "created_at": "2026-09-26T14:47:17.667050Z",
+  "updated_at": "2026-09-26T14:47:17.667050Z"
+}
+
+==> 2. LIST    GET /articles
+$ curl -X GET http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/articles
+HTTP 200
+[
+  {
+    "title": "Hello Kubernetes",
+    "content": "Running on a 3-member MongoDB replica set",
+    "author": "raushan",
+    "tags": [
+      "k8s",
+      "mongodb"
+    ],
+    "id": "6ab7daf53ffe4bf2352135d7",
+    "created_at": "2026-09-26T14:47:17.667000Z",
+    "updated_at": "2026-09-26T14:47:17.667000Z"
+  }
+]
+
+==> 3. READ    GET /articles/6ab7daf53ffe4bf2352135d7
+$ curl -X GET http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/articles/6ab7daf53ffe4bf2352135d7
+HTTP 200
+{
+  "title": "Hello Kubernetes",
+  "content": "Running on a 3-member MongoDB replica set",
+  "author": "raushan",
+  "tags": [
+    "k8s",
+    "mongodb"
+  ],
+  "id": "6ab7daf53ffe4bf2352135d7",
+  "created_at": "2026-09-26T14:47:17.667000Z",
+  "updated_at": "2026-09-26T14:47:17.667000Z"
+}
+
+==> 4. UPDATE  PUT /articles/6ab7daf53ffe4bf2352135d7
+$ curl -X PUT http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/articles/6ab7daf53ffe4bf2352135d7 -d '{"title":"Hello Kubernetes (updated)","tags":["k8s","mongodb","helm"]}'
+HTTP 200
+{
+  "title": "Hello Kubernetes (updated)",
+  "content": "Running on a 3-member MongoDB replica set",
+  "author": "raushan",
+  "tags": [
+    "k8s",
+    "mongodb",
+    "helm"
+  ],
+  "id": "6ab7daf53ffe4bf2352135d7",
+  "created_at": "2026-09-26T14:47:17.667000Z",
+  "updated_at": "2026-09-26T14:47:17.765000Z"
+}
+
+==> 5. DELETE  DELETE /articles/6ab7daf53ffe4bf2352135d7
+$ curl -X DELETE http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/articles/6ab7daf53ffe4bf2352135d7
+HTTP 204
+
+==> 6. READ after delete (expect 404)
+$ curl -X GET http://k8s-articles-articles-22da6c2024-65471723.us-east-1.elb.amazonaws.com/articles/6ab7daf53ffe4bf2352135d7
+HTTP 404
+{
+  "detail": "Article not found"
+}
+
+All CRUD operations passed.
