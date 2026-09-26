@@ -7,7 +7,7 @@
 #   controller role + policy     -> what Karpenter itself may do in EC2/IAM/SQS
 #   SQS queue + EventBridge      -> spot interruption / rebalance / health events
 #   helm_release                 -> the controller (runs on the system node group)
-#   EC2NodeClass + NodePool      -> which machines it may launch
+#   EC2NodeClass + NodePool      -> in layer 2 (need a live cluster to plan)
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
@@ -469,77 +469,6 @@ resource "helm_release" "karpenter" {
   ]
 }
 
-# Which machines Karpenter may launch: EKS-optimised AL2023 (chrony + Amazon Time
-# Sync built in), private subnets, cluster security group, encrypted gp3, IMDSv2.
-resource "kubectl_manifest" "karpenter_node_class" {
-  yaml_body = <<-YAML
-    apiVersion: karpenter.k8s.aws/v1
-    kind: EC2NodeClass
-    metadata:
-      name: default
-    spec:
-      role: ${aws_iam_role.karpenter_node.name}
-      amiSelectorTerms:
-        - alias: al2023@latest
-      subnetSelectorTerms:
-        - tags:
-            karpenter.sh/discovery: ${var.eks_cluster_name}
-      securityGroupSelectorTerms:
-        - tags:
-            karpenter.sh/discovery: ${var.eks_cluster_name}
-      metadataOptions:
-        httpEndpoint: enabled
-        httpTokens: required
-        httpPutResponseHopLimit: 1
-      blockDeviceMappings:
-        - deviceName: /dev/xvda
-          ebs:
-            volumeSize: 50Gi
-            volumeType: gp3
-            encrypted: true
-  YAML
-
-  depends_on = [helm_release.karpenter, aws_ec2_tag.cluster_sg_karpenter, aws_eks_access_entry.karpenter_node]
-}
-
-# Spot first with on-demand fallback, spread over the cluster's AZs; consolidation
-# removes empty/under-used nodes. The CPU limit caps the maximum spend.
-resource "kubectl_manifest" "karpenter_node_pool" {
-  yaml_body = <<-YAML
-    apiVersion: karpenter.sh/v1
-    kind: NodePool
-    metadata:
-      name: default
-    spec:
-      template:
-        spec:
-          nodeClassRef:
-            group: karpenter.k8s.aws
-            kind: EC2NodeClass
-            name: default
-          expireAfter: 720h
-          requirements:
-            - key: kubernetes.io/arch
-              operator: In
-              values: ["amd64"]
-            - key: karpenter.sh/capacity-type
-              operator: In
-              values: ["spot", "on-demand"]
-            - key: karpenter.k8s.aws/instance-category
-              operator: In
-              values: ["c", "m", "r", "t"]
-            - key: karpenter.k8s.aws/instance-generation
-              operator: Gt
-              values: ["4"]
-            - key: topology.kubernetes.io/zone
-              operator: In
-              values: ${jsonencode(local.azs)}
-      limits:
-        cpu: "64"
-      disruption:
-        consolidationPolicy: WhenEmptyOrUnderutilized
-        consolidateAfter: 2m
-  YAML
-
-  depends_on = [kubectl_manifest.karpenter_node_class]
-}
+# The EC2NodeClass and NodePool (which machines Karpenter may launch) are
+# Kubernetes objects, so they live in layer 2 (aws/2-platform/karpenter_nodes.tf),
+# where the cluster already exists at plan time.

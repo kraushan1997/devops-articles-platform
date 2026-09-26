@@ -70,6 +70,9 @@ module "platform" {
   # ALB controller injects readiness gates: a pod only counts as Ready once the
   # ALB target group reports it healthy -> zero-downtime rolling updates
   app_namespace_extra_labels = { "elbv2.k8s.aws/pod-readiness-gate-inject" = "enabled" }
+
+  # MongoDB PVCs need the gp3 StorageClass before Argo CD deploys them
+  depends_on = [kubernetes_storage_class_v1.gp3]
 }
 
 output "argocd_admin_password_cmd" {

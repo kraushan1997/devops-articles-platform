@@ -1,28 +1,7 @@
-# In-cluster components that must exist before workloads: default StorageClass and
-# the AWS Load Balancer Controller (turns Ingress objects into ALBs).
+# The AWS Load Balancer Controller (turns Ingress objects into ALBs).
 
-# Encrypted gp3 as the default StorageClass (MongoDB PVCs). WaitForFirstConsumer
-# creates each EBS volume in the AZ where its pod was scheduled; Retain keeps the
-# data if a PVC is deleted by mistake.
-resource "kubectl_manifest" "gp3_storage_class" {
-  yaml_body = <<-YAML
-    apiVersion: storage.k8s.io/v1
-    kind: StorageClass
-    metadata:
-      name: gp3
-      annotations:
-        storageclass.kubernetes.io/is-default-class: "true"
-    provisioner: ebs.csi.aws.com
-    volumeBindingMode: WaitForFirstConsumer
-    allowVolumeExpansion: true
-    reclaimPolicy: Retain
-    parameters:
-      type: gp3
-      encrypted: "true"
-  YAML
-
-  depends_on = [aws_eks_addon.ebs_csi]
-}
+# The default gp3 StorageClass is created in layer 2 (aws/2-platform/storage.tf):
+# Kubernetes objects need a live cluster at plan time.
 
 resource "helm_release" "aws_lb_controller" {
   name       = "aws-load-balancer-controller"

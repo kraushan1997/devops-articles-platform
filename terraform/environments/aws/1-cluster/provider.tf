@@ -14,10 +14,6 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 3.3"
     }
-    kubectl = {
-      source  = "alekc/kubectl"
-      version = "~> 2.4"
-    }
   }
 
   # Remote state (recommended). Create the bucket once, then uncomment.
@@ -45,7 +41,7 @@ provider "aws" {
   }
 }
 
-# helm / kubectl talk to the new cluster using a short-lived token from the AWS CLI
+# helm talks to the new cluster using a short-lived token from the AWS CLI
 provider "helm" {
   kubernetes = {
     host                   = aws_eks_cluster.main.endpoint
@@ -58,16 +54,6 @@ provider "helm" {
   }
 }
 
-provider "kubectl" {
-  host                   = aws_eks_cluster.main.endpoint
-  cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-  load_config_file       = false
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", aws_eks_cluster.main.name, "--region", var.aws_region]
-  }
-}
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
